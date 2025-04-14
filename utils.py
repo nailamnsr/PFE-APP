@@ -1,10 +1,11 @@
-def get_plant_disease_info():
+#def get_plant_disease_info():
     # Replace  with real logic later 
-    return {
-        "disease": "Powdery Mildew",
-        "confidence": 0.92,
+    #return {
+       # "disease": "Powdery Mildew",
+        #"confidence": 0.92,
         
-    }
+   # }
+#hashing the password and verifying the password using bcrypt
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
@@ -35,3 +36,62 @@ def decode_access_token(token: str):
         return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
     except JWTError:
         return None
+    
+
+import torch
+from models.PrototypicalNet import ProtoNet, euclidean_dist
+from torchvision import transforms
+from PIL import Image
+
+# Classes possibles
+CLASSES = ['Potato healthy', 'Tomato YellowLeaf Curl Virus', 'Potat Late blight', 'Potato early blight',
+           'Tomato healthy', 'Tomato Spider mites ', 'Tomato Target Spot',
+           'Tomato Bacterial spot', 'Pepper bell healthy', 'Tomato Late blight', '  Tomato mosaic virus',
+           'Tomato Septoria leaf spot', 'Tomato Early blight', 'Pepper bell Bacterial spot', 'Tomato Leaf Mold']
+
+ 
+
+# Charger le modèle et les prototypes
+model = ProtoNet()
+model.load_state_dict(torch.load("models/best_model.pth", map_location=torch.device("cpu")))
+model.eval()
+prototypes = torch.load("models/prototypess.pt", map_location=torch.device("cpu"))
+
+# Fonction de prédiction
+def predict(image_tensor):
+    try:
+        
+        print(f"Image tensor shape: {image_tensor.shape}")
+
+        
+        with torch.no_grad():
+            embedding = model(image_tensor)   
+            print(f"Embedding shape: {embedding.shape}")   
+            
+            
+            if not prototypes:
+                raise ValueError("Prototypes are not loaded correctly!")
+            print(f"Prototypes available: {len(prototypes)}")
+
+             
+            for class_name, proto in list(prototypes.items())[:3]:
+                print(f"Prototype for {class_name}: {proto.shape}")
+
+            
+            distances = {class_name: euclidean_dist(embedding, proto) for class_name, proto in prototypes.items()}
+            print(f"Calculated distances: {distances}")   
+ 
+            predicted_class_name = min(distances, key=distances.get)   
+            confidence = 1 / (1 + distances[predicted_class_name].item())
+            confidence = round(confidence, 2)
+            print(f"Predicted class: {predicted_class_name}, Confidence: {confidence}")
+
+        return {
+            "disease": predicted_class_name,
+            "confidence": confidence
+        }
+
+    except Exception as e:
+        print(f"Error in prediction: {e}")
+        return {"error": str(e)}
+ 

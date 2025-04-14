@@ -4,7 +4,12 @@ import os
 from pydantic import BaseModel
 import sqlite3
 from fastapi.middleware.cors import CORSMiddleware
-from utils import get_plant_disease_info,hash_password, create_access_token,verify_password
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+from PIL import Image
+import io
+from utils import predict
+from utils import hash_password, create_access_token,verify_password
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -15,15 +20,37 @@ app.add_middleware(
 )
 UPLOAD_DIR = "temp_uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)   
+from torchvision import transforms
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        print(f"Received file: {file.filename}")
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        print(f"Image opened successfully: {image.size}")
+        # Preprocess the image into a tensor
+        transform = transforms.Compose([
+            transforms.Resize((64, 64)),  # Resize to the input size expected by the model
+            transforms.ToTensor(),         # Convert image to tensor
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize pixel values
+        ])
+        image_tensor = transform(image).unsqueeze(0)  # Add batch dimension
+        global result
+        # Pass the tensor to the predict function
+        result = predict(image_tensor)
 
-    return {"filename": file.filename, "filepath": file_path}
+        return result  # Return the prediction result
+    except Exception as e:
+        print(f"Error processing file: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+@app.get("/results")
+async def get_results():
+    info=  result
+    if info is None:
+        raise HTTPException(status_code=404, detail="No prediction available")
+    return info 
+ 
 
 def get_db_connection():
     with sqlite3.connect("users.db") as conn:
@@ -102,14 +129,7 @@ async def signup(user: UserSignup):
     finally:
         conn.close()
 
-
-
-
-@app.get("/disease-info")
-def disease_info():
-    info = get_plant_disease_info()
-    return info  
-
+ 
 class Saved(BaseModel):
     user_id: int
     prediction: str
@@ -117,7 +137,9 @@ class Saved(BaseModel):
 
 @app.post("/saved")
 async def save(user:Saved):
-    info = get_plant_disease_info()   
+    info =  result
+    if info is None:
+        raise HTTPException(status_code=404, detail="No prediction available")  
 
     user = Saved(
         prediction=info["disease"],
